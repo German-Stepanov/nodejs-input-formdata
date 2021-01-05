@@ -1,0 +1,25 @@
+{
+  "name": "input-formdata",
+  "version": "1.0.0",
+  "description": "Receiving and parsing form data",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "demo": "cd _demo && node server"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/German-Stepanov/nodejs-input-formdata.git"
+  },
+  "keywords": [
+    "formdata",
+    "files",
+    "upload"
+  ],
+  "author": "German Stepanov",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/German-Stepanov/nodejs-input-formdata/issues"
+  },
+  "homepage": "https://github.com/German-Stepanov/nodejs-input-formdata#readme"
+}
