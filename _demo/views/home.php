@@ -520,8 +520,8 @@ var XHR = new lib_XHR();
 </html>
 
 <script>
-//Эмуляция расшифровки получаемых даннных
 /*
+//Эмуляция расшифровки получаемых даннных
 var flag_test = false;
 if (flag_test) {
 	var boundary = '----WebKitFormBoundaryolSoV86KrWslVQky';
