@@ -1,6 +1,6 @@
 {
   "name": "input-formdata",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Receiving and parsing form data",
   "main": "index.js",
   "scripts": {
