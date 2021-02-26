@@ -109,7 +109,8 @@ var app = function(req, res) {
 				output.view({
 					file : 'home.php',
 					data : {
-						$test : Number(url[1] || 0)
+						$test 		: Number(url[1] || 0),
+						$subtest 	: Number(url[2] || 0)
 					}
 				})
 			);

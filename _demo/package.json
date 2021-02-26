@@ -1,6 +1,6 @@
 {
   "name": "demo-input-formdata",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Demo for input-formdata",
   "main": "server.js",
   "dependencies": {

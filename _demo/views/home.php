@@ -286,8 +286,12 @@ var XHR = new lib_XHR();
 	<?php elseif($test==11): ?>
         <div><a href="/">Список тестов</a></div>
         <br />
-        <h2>11. Эмуляция расшифровки получаемых данных на стороне сервера</h2>
-        <?
+        <h2>11. Эмуляция расшифровки получаемых данных на стороне сервера
+        	<br><span class="red">ВАРИАНТ <?=$subtest || 2?>: <?=$subtest==1 ? 'Cохранение в файл каждой порции данных' : 'Сохранение в файл только всех порций данных'?></span>
+        </h2>
+        
+		<?
+			var $saveFileChunk = $subtest==1 ? true : false;
             var $boundary = '----WebKitFormBoundaryolSoV86KrWslVQky';
             var $chunk_array = [
             '------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_place"\r\n\r\n\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_subject"\r\n\r\n\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_note"\r\n\r\n\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="flag_replace"\r\n\r\n0\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_persons"\r\n\r\n\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_album_id"\r\n\r\n3\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-da',
@@ -408,12 +412,11 @@ var XHR = new lib_XHR();
                 files 		: {},
                 lastFile 	: null,
             };
-            
-            var $re_chunks = new RegExp('(--' + $boundary + '\\r\\n)?([\\S\\s]+?)(--' + $boundary + '(?:--)?\\r\\n|$)', 'g');
-            var $re_contents = /^Content-Disposition: ?form-data; ?name="([^"]*?)"(?:; ?filename="([^"]*?)"\r\nContent-Type: ?(.*))?\r\n\r\n([\s\S]*?)$/g;
-            var $re_endData = /\r\n$/;
-            
-            var $re_b = new RegExp($boundary, 'g');
+
+			var $re_chunks  = new RegExp('(--' + $boundary + '\\r\\n)?(Content-Disposition: form-data; name="([^"]*?)"(?:; filename="([^"]*?)"\\r\\nContent-Type: (.*))?\\r\\n\\r\\n)([\\s\\S]*?)(\\r\\n)?(--' + $boundary + '(?:--)?\\r\\n|$)', 'g');
+			var $re_binary1 = new RegExp('^([\\S\\s]*?)(\\r\\n)(--' + $boundary + '(?:--)?\\r\\n)');
+			var $re_binary2 = new RegExp('^([\\S\\s]*?)(\\r\\n)?$');
+			var $re_boundary = new RegExp('--' + $boundary + '(--)?\\r\\n', 'g');
             
             var $chunks = '';
 			var $log = '';
@@ -432,53 +435,51 @@ var XHR = new lib_XHR();
         <?php foreach($chunk_array as $key=>$chunk): ?>
 			<?
                 $chunks += $chunk;
-				$log += '<div class="green">-----chunk-----</div>'
-                $chunks = $chunks.replace($re_chunks, function(s, bound1, contents, bound2) {
-                    //Начальная граница
-                    if(bound1) $log += '<div><b>' + bound1.replace($re_b,'(BOUNDARY)').replace(/\r\n/g, '(CR)(LN)') + '</b></div>';
-                    var flag = false;
-                    contents = contents.replace($re_contents, function(s1, name, filename, mime, value) {
-                        flag = true;
-                        var end_data = $re_endData.test(value);
-                        if (filename) {
-                            $input.lastFile = filename;
-                            var binaryData = value.replace($re_endData, '');
-                            //Записываем в файл
-                            $input.files[$input.lastFile] = binaryData;
-                            if (end_data) $input.lastFile = null;
-                            
-							$log += '<div>' + s1.replace(value, '<span class="blue">(BINARY DATA)</span>').replace(/\r\n/g, '(CR)(LN)') + '</div>';
-                            
-                            return '';
-                        } else {
-                            $input.lastFile = null;
-                            if (!end_data) {
-								$log += '<div class="red">Не полные данные</div>';
-                                return s1; //Не полные данные
-                            }
-                            $input.parse[name] = value.replace($re_endData, '');
+				$log += '<div class="green">-----chunk-----</div>';
 
-							$log += '<div>' + s1.replace(/(\r\n\r\n)((?!\r\n).*)(\r\n)/, '$1<span class="blue">$2</span>$3').replace(/\r\n/g, '(CR)(LN)') + '</div>';
-                            
-                            return '';
-                        }
-                    });
-                    
-                    if (!flag && $input.lastFile) {
-                        var end_data = $re_endData.test(contents);
-                        var binaryData = contents.replace($re_endData,'');
-                        //Дописываем в файл
-                        $input.files[$input.lastFile] += binaryData;
-                        if (end_data) $input.lastFile = null;
-                        
-						$log += '<div>' + contents.replace(binaryData, '<span class="blue">(BINARY DATA+)</span>').replace(/\r\n/g, '(CR)(LN)') + '</div>';
-                        if (bound2) $log += '<div><b>' + bound2.replace($re_b,'(BOUNDARY)').replace(/\r\n/g, '(CR)(LN)') + '</b></div>';
-                        
-                        //Удаляем данные
-                        return '';
-                    }
-                    if (bound2) $log += '<div><b>' + bound2.replace($re_b,'(BOUNDARY)').replace(/\r\n/g, '(CR)(LN)') + '</b></div>';
-                    return (contents) ? (bound1 || '') + contents + bound2 : '';
+				if ($input.lastFile && $saveFileChunk) {
+					if ($re_binary1.test($chunks)) {
+						//Блок с двоичными данными И следующим за ними содержимым
+						$chunks = $chunks.replace($re_binary1, function(s, binaryData, endData, bound ) {
+							//Записываем в файл
+							$input.files[$input.lastFile] += binaryData;
+							$log += '<div><span class="blue">(BINARY DATA+)</span>' + (endData ? '<b>(CR)(LN)<b>' : '') + (bound ? bound.replace($re_boundary,'--(BOUNDARY)$1(CR)(LN)') : '') + '</div>';
+							return '';
+						})
+					} else if ($re_binary2.test($chunks)) {
+						//Блок c двоичными данными (ТОЛЬКО)
+						$chunks = $chunks.replace($re_binary2, function(s, binaryData, endData ) {
+							if (endData || /Content-Disposition/.test($chunks)) return s;
+							//Записываем в файл
+							$input.files[$input.lastFile] += binaryData;
+							$log += '<div><span class="blue">(BINARY DATA+)</span></div>';
+							return '';
+						});
+					}
+				}
+
+				$chunks = $chunks.replace($re_chunks, function(s, bound1, content, name, filename, mime, value, end_data, bound2) {
+					var $value_str;
+					if (filename) {
+						if (!bound2 && !$saveFileChunk) {
+							$log += '<div class="red">Не полные данные</div>';
+							return s; //Не полные данные
+						}
+						$input.lastFile = filename;
+						//Записываем в файл
+						$input.files[$input.lastFile] = value;
+						$value_str = '(BINARY DATA)';
+					} else {
+						$input.lastFile = null;
+						if (!bound2) {
+							$log += '<div class="red">Не полные данные</div>';
+							return s;
+						}
+						$input.parse[name] = value;
+						$value_str 	= value;
+					}
+					$log += '<div><b>' + (bound1 || '').replace($re_boundary,'--(BOUNDARY)$1(CR)(LN)<br>') + content.replace(/\r\n/g, '(CR)(LN)') + '<span class="blue">' + $value_str + '</span>' + (end_data ? '(CR)(LN)' : '') + bound2.replace($re_boundary,'<br>--(BOUNDARY)$1(CR)(LN)') + '</b></div>';
+                    return '';
                 });
             ?>    
             
@@ -514,204 +515,8 @@ var XHR = new lib_XHR();
         <div>8. <a href="/8">Использование объекта XMLHttpRequest для отправки данных.</a></div>
         <div>9. <a href="/9">Использование объекта XMLHttpRequest для отправки данных (вариант).</a></div>
         <div>10. <a href="/10">Использование объекта XMLHttpRequest для отправки формы.</a></div>
-        <div>11. <a href="/11">Эмуляция расшифровки получаемых данных на стороне сервера.</a></div>
+        <div>11. <a href="/11/1">Эмуляция расшифровки получаемых данных на стороне сервера(сохранение каждой порции в файл).</a></div>
+        <div>12. <a href="/11/2">Эмуляция расшифровки получаемых данных на стороне сервера(сохранение только целого файла).</a></div>
     <?php endif; ?>
 </body>
 </html>
-
-<script>
-/*
-//Эмуляция расшифровки получаемых даннных
-var flag_test = false;
-if (flag_test) {
-	var boundary = '----WebKitFormBoundaryolSoV86KrWslVQky';
-	var chunk_array = [
-	'------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_place"\r\n\r\n\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_subject"\r\n\r\n\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_note"\r\n\r\n\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="flag_replace"\r\n\r\n0\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_persons"\r\n\r\n\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="file_album_id"\r\n\r\n3\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-da',
-	'ta; name="file_status"\r\n\r\nНеактивирован\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050001.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<01А>',
-	'<01Б>',
-	'<01В>',
-	'<01Г>',
-	'<01Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050002.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<02А>',
-	'<02Б>',
-	'<02В>',
-	'<02Г>',
-	'<02Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050003.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<03А>',
-	'<03Б>',
-	'<03В>',
-	'<03Г>',
-	'<03Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050004.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<04А>',
-	'<04Б>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050005.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<05А>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050006.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<06А>',
-	'<06Б>',
-	'<06В>',
-	'<06Г>',
-	'<06Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050007.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<07А>',
-	'<07Б>',
-	'<07В>',
-	'<07Г>',
-	'<07Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050008.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<08А>',
-	'<08Б>',
-	'<08В>',
-	'<08Г>',
-	'<08Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050009.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<09А>',
-	'<09Б>',
-	'<09В>',
-	'<09Г>',
-	'<09Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050010.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<10А>',
-	'<10Б>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050011.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<11А>',
-	'<11Б>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050012.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<12А>',
-	'<12Б>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050013.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<13А>',
-	'<13Б>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050014.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<14А>',
-	'<14Б>',
-	'<14В>',
-	'<14Г>',
-	'<14Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050015.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<15А>',
-	'<15Б>',
-	'<15В>',
-	'<15Г>',
-	'<15Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050016.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<16А>',
-	'<16Б>',
-	'<16В>',
-	'<16Г>',
-	'<16Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050017.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<17А>',
-	'<17Б>',
-	'<17В>',
-	'<17Г>',
-	'<17Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050018.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<18А>',
-	'<18Б>',
-	'<18В>',
-	'<18Г>',
-	'<18Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050019.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<19А>',
-	'<19Б>',
-	'<19В>',
-	'<19Г>',
-	'<19Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050020.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<20А>',
-	'<20Б>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050021.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<21А>',
-	'<21Б>',
-	'<21В>',
-	'<21Г>',
-	'<21Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050022.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<22А>',
-	'<22Б>',
-	'<22В>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050023.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<23А>',
-	'<23Б>',
-	'<23В>',
-	'<23Г>',
-	'<23Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050024.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<24А>',
-	'<24Б>',
-	'<24В>',
-	'<24Г>',
-	'<24Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050025.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<25А>',
-	'<25Б>',
-	'<25В>',
-	'<25Г>',
-	'<25Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050026.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<26А>',
-	'<26Б>',
-	'<26В>',
-	'<26Г>',
-	'<26Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050027.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<27А>',
-	'<27Б>',
-	'<27В>',
-	'<27Г>',
-	'<27Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050028.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<28А>',
-	'<28Б>',
-	'<28В>',
-	'<28Г>',
-	'<28Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050029.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<29А>',
-	'<29Б>',
-	'<29В>',
-	'<29Г>',
-	'<29Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050030.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<30А>',
-	'<30Б>',
-	'<30В>',
-	'<30Г>',
-	'<30Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050031.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<31А>',
-	'<31Б>',
-	'<31Г>',
-	'<31Д>',
-	'<31Е>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050032.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<32А>',
-	'<32Б>',
-	'<32В>',
-	'<32Г>',
-	'<32Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050033.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<33А>',
-	'<33Б>',
-	'<33В>',
-	'<33Г>',
-	'<33Д>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050034.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<34А>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="userfiles[]"; filename="20210807_050035.jpg"\r\nContent-Type: image/jpeg\r\n\r\n<35А>',
-	'<35Б>\r\n------WebKitFormBoundaryolSoV86KrWslVQky\r\nContent-Disposition: form-data; name="id_array"\r\n\r\n["42922","42923","42936","42942","42948","42949","42950","429',
-	'51","42952","42953"]\r\n------WebKitFormBoundaryolSoV86KrWslVQky--\r\n',
-	];
-	var input = {
-		parse 		: {},
-		files 		: {},
-		lastFile 	: null,
-	};
-	
-	var re_chunks = new RegExp('(--' + boundary + '\\r\\n)?([\\S\\s]+?)(--' + boundary + '(?:--)?\\r\\n|$)', 'g');
-	var re_contents = /^Content-Disposition: ?form-data; ?name="([^"]*?)"(?:; ?filename="([^"]*?)"\r\nContent-Type: ?(.*))?\r\n\r\n([\s\S]*?)$/g;
-	var re_endData = /\r\n$/;
-	
-	var re_b = new RegExp(boundary, 'g');
-	
-	var chunks = '';
-	
-	console.log('--------------boundary=`' + boundary + '`');
-	
-	for (var i = 0; i<chunk_array.length; i++) {
-		chunks += chunk_array[i];
-		console.log('-----chunk-----');
-		//console.log(chunks.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>'));
-		
-		chunks = chunks.replace(re_chunks, function(s, bound1, contents, bound2) {
-			//Начальная граница
-			if(bound1) console.log(bound1.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>') + '\r\n');
-			var flag = false;
-			contents = contents.replace(re_contents, function(s1, name, filename, mime, value) {
-				flag = true;
-				var end_data = re_endData.test(value);
-				if (filename) {
-					input.lastFile = filename;
-					var binaryData = value.replace(re_endData, '');
-					//Записываем в файл
-					input.files[input.lastFile] = binaryData;
-					if (end_data) input.lastFile = null;
-					
-					console.log(s1.replace(value, '<BINARY DATA>').replace(/\r\n/g, '<CR><LN>'));
-					
-					return '';
-				} else {
-					input.lastFile = null;
-					if (!end_data) {
-						console.log(('Не полные данные'));
-						return s1; //Не полные данные
-					}
-					input.parse[name] = value.replace(re_endData, '');
-					
-					console.log(s1.replace(/\r\n/g, '<CR><LN>'));
-					
-					return '';
-				}
-			});
-			
-			if (!flag && input.lastFile) {
-				var end_data = re_endData.test(contents);
-				var binaryData = contents.replace(re_endData,'');
-				//Дописываем в файл
-				input.files[input.lastFile] += binaryData;
-				if (end_data) input.lastFile = null;
-				
-				console.log(contents.replace(binaryData, '<BINARY DATA+>').replace(/\r\n/g, '<CR><LN>'));
-				if (bound2) console.log(bound2.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>'));
-				
-				//Удаляем данные
-				return '';
-			}
-			if (bound2) console.log(bound2.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>'));
-			return (contents) ? (bound1 || '') + contents + bound2 : '';
-		});
-	};
-	console.log('--------------------------');
-	console.log(input.parse);
-	console.log(input.files);
-	console.log('Не расшифорованные данные=`' + chunks.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>') + '`');
-}
-*/
-</script>

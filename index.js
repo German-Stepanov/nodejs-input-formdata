@@ -12,6 +12,8 @@ var Input = function (config) {
 	config.storageTime 	= config.storageTime || 60;
 	//Режим отладки	(Не сохранять отладочную информацию)
 	config.isDebug		= config.isDebug==null ? false : Boolean(config.isDebug);					
+	//Сохранять файл по частям
+	config.saveFileChunk= config.saveFileChunk==null ? true : Boolean(config.saveFileChunk);
 
 	//Проверка существования папки для временных файлов
 	if (require('fs').existsSync(config.tmpDir)==false) {
@@ -77,6 +79,18 @@ var Input = function (config) {
 		};
 	};
 
+	//Данные GET
+	this.parseNotBoundaryChunk = function(req, chunk) {
+		//Формируем строку параметров из полученных данных
+		var str = require('querystring').unescape(chunk.toString('utf8'));
+		//Парсинг параметров
+		str.replace(/\+/g, ' ').replace(/([^=]*)=([^&]*)(?:&|$)/g, function (s, field, value) {
+			if (config.isDebug) console.log('DEBUG INPUT:', 'field="' + field + '" value="' + value + '"');
+			//Параметры есть - добавляем результат
+			self.saveFieldValue(req, field, value);
+		});
+	};
+	
 	//Парсинг ввода запросов
 	this.start = function (req, res, next) {
 
@@ -105,16 +119,15 @@ var Input = function (config) {
 			},
 			lastFile 	: null,
 		};
-		
 
 		//Не полные части данных
 		var chunks = '';
 
-		var re_chunks = new RegExp('(--' + boundary + '\\r\\n)?([\\S\\s]+?)(--' + boundary + '(?:--)?\\r\\n|$)', 'g');
-		var re_contents = /^Content-Disposition: ?form-data; ?name="([^"]*?)"(?:; ?filename="([^"]*?)"\r\nContent-Type: ?(.*))?\r\n\r\n([\s\S]*?)$/g;
-		var re_endData = /\r\n$/;
-		var re_b = new RegExp(boundary, 'g');
-		
+		var re_chunks  = new RegExp('(--' + boundary + '\\r\\n)?(Content-Disposition: form-data; name="([^"]*?)"(?:; filename="([^"]*?)"\\r\\nContent-Type: (.*))?\\r\\n\\r\\n)([\\s\\S]*?)(\\r\\n)?(--' + boundary + '(?:--)?\\r\\n|$)', 'g');
+		var re_binary1 = new RegExp('^([\\S\\s]*?)(\\r\\n)(--' + boundary + '(?:--)?\\r\\n)');
+		var re_binary2 = new RegExp('^([\\S\\s]*?)(\\r\\n)?$');
+		var re_boundary = new RegExp('--' + boundary + '(--)?\\r\\n', 'g');
+
 		//Функция обработки события приема данных
 		var onData = function(chunk) {
 
@@ -126,14 +139,7 @@ var Input = function (config) {
 			chunk = chunk.toString('binary');
 
 			if (!boundary) {
-				//Формируем строку параметров из полученных данных
-				var str = require('querystring').unescape(chunk.toString('utf8'));
-				//Парсинг параметров
-				str.replace(/\+/g, ' ').replace(/([^=]*)=([^&]*)(?:&|$)/g, function (s, field, value) {
-					if (config.isDebug) console.log('DEBUG INPUT:', 'field="' + field + '" value="' + value + '"');
-					//Параметры есть - добавляем результат
-					self.saveFieldValue(req, field, value);
-				});
+				self.parseNotBoundaryChunk(req, chunk);
 				return;
 			};
 			
@@ -149,40 +155,57 @@ var Input = function (config) {
 			chunks += chunk;
 			
 			if (config.isDebug) console.log(['chunk ' + chunk.length + ' байт']);
-	
+			
+			//Извлекаем двоичные данные
+			if (req.input.lastFile && config.saveFileChunk) {
+				if (re_binary1.test(chunks)) {
+					//Блок с двоичными данными И следующим за ними содержимым
+					chunks = chunks.replace(re_binary1, function(s, binaryData, endData, bound ) {
+						var binaryBuffer = Buffer.from(binaryData, 'binary');
+						//Увеличиваем размер файла
+						req.input.lastFile['size']+= binaryBuffer.length;
+						//Сохранение двоичных данных
+						require('fs').appendFileSync(req.input.lastFile['tmp'], binaryBuffer);								
+						if (endData) req.input.lastFile = null;
+						if (config.isDebug) process.stdout.write('<BINARY DATA+ ' + binaryBuffer.length + ' байт>' + (endData ? '<CR><LN>' : '') + (bound ? bound.replace(re_boundary,'\r\n--<BOUNDARY>$1<CR><LN>\r\n') : ''));
+						return '';
+					})
+				} else if (re_binary2.test(chunks)) {
+					//Блок c двоичными данными (ТОЛЬКО)
+					chunks = chunks.replace(re_binary2, function(s, binaryData, endData ) {
+						if (endData || /Content-Disposition/.test(chunks)) return s;
+						var binaryBuffer = Buffer.from(binaryData, 'binary');
+						//Увеличиваем размер файла
+						req.input.lastFile['size']+= binaryBuffer.length;
+						//Сохранение двоичных данных
+						require('fs').appendFileSync(req.input.lastFile['tmp'], binaryBuffer);								
+						if (config.isDebug) process.stdout.write('<BINARY DATA+ ' + binaryBuffer.length + ' байт>');
+						return '';
+					});
+				}
+			}
 
-			chunks = chunks.replace(re_chunks, function(s, bound1, contents, bound2) {
-				//Начальная граница
-				if (config.isDebug && bound1) process.stdout.write(bound1.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>') + '\r\n');
-
-				var flag = false;
-				contents = contents.replace(re_contents, function(s1, name, filename, mime, value) {
-					flag = true;
-					var end_data = re_endData.test(value);
-					
-					var name_str 		= name ? Buffer.from(name, 'binary').toString('utf8') : name;
-					var filename_str	= filename ? Buffer.from(filename, 'binary').toString('utf8') : filename;
-					var value_str 		= value ? Buffer.from(value, 'binary').toString('utf8') : value;
+			//Извлекаем содержимое
+			if (re_chunks.test(chunks)) {
+				chunks = chunks.replace(re_chunks, function(s, bound1, content, name, filename, mime, value, end_data, bound2) {
+					var value_str;
+					var name_str = Buffer.from(name, 'binary').toString('utf8');
+					var filename_str = filename ? Buffer.from(filename, 'binary').toString('utf8') : '';
 					
 					if (filename) {
-						var binaryData = value.replace(re_endData, '');
-						var binaryBuffer = Buffer.from(binaryData, 'binary');
+						if (!bound2 && !config.saveFileChunk) return s; //Не полные данные
 						//Увеличиваем число скаченных файлов
 						req.input.files++;
-						//if (config.isDebug) process.stdout.write('(files=' + req.input.files + ')');
+
+						var binaryBuffer = Buffer.from(value, 'binary');
 						//Сохраняемое значение - объект с информацией о файле
 						var file_name_ext = filename_str.split('/').pop().split('.');
 						req.input.lastFile = {
-							//Временное название
-							'tmp'		: self.createTmpName(),
-							//mime						
-							'mime'		: mime,	
-							//Название без расширения
-							'name'		: file_name_ext[0],
-							//расширение					
-							'ext'		: '.' + file_name_ext[1],
-							//Размер	
-							'size'		: binaryBuffer.length,	
+							'tmp'	: self.createTmpName(),		//Временное название
+							'mime'	: mime,						//MIME	
+							'name'	: file_name_ext[0],			//Название без расширения
+							'ext'	: '.' + file_name_ext[1],	//Расширение
+							'size'	: binaryBuffer.length,		//Размер
 							//Функция перемещения относительно корневой папки
 							'replaceTo' : function(filename) {
 								require('fs').renameSync(this['tmp'], require('path').dirname(require.main.filename) + filename);
@@ -192,69 +215,30 @@ var Input = function (config) {
 						require('fs').appendFileSync(req.input.lastFile['tmp'], binaryBuffer);
 						//Добавляем результат
 						self.saveFieldValue(req, name_str, req.input.lastFile);
-						if (end_data) req.input.lastFile = null;
-						
-						if (config.isDebug) {
-							var output = s1.replace(value, '<BINARY DATA>').replace(/\r\n/g, '<CR><LN>');
-							output = Buffer.from(output, 'binary').toString('utf8').replace('<BINARY DATA>', '<BINARY DATA ' + binaryBuffer.length + ' байт>');
-							process.stdout.write(output);
-						}
-						return '';
+						if (bound2) req.input.lastFile = null;
+						value_str = '<BINARY DATA ' + binaryBuffer.length + ' байт>';
 					} else {
 						req.input.lastFile = null;
-						if (!end_data) {
-							process.stdout.write(('Не полные данные'));
-							process.stdout.write('\r\n');
-							return s1; //Не полные данные
-						}
-						value_str = value_str.replace(re_endData, '');
+						if (!bound2) return s; //Не полные данные
+						value_str 	= Buffer.from(value, 'binary').toString('utf8');
 						//Добавляем результат
 						self.saveFieldValue(req, name_str, value_str);
-						if (config.isDebug) {
-							var output = s1.replace(/\r\n/g, '<CR><LN>')
-							output = Buffer.from(output, 'binary').toString('utf8')
-							process.stdout.write(output);
-						}
-						return '';
 					}
-				});
-				
-				if (!flag && req.input.lastFile) {
-					var end_data = re_endData.test(contents);
-					
-					var binaryData = contents.replace(re_endData, '');
-					var binaryBuffer = Buffer.from(binaryData, 'binary');
-					//Увеличиваем размер файла
-					req.input.lastFile['size']+= binaryBuffer.length;
-					//Сохранение двоичных данных "block"
-					require('fs').appendFileSync(req.input.lastFile['tmp'], binaryBuffer);								
-					if (end_data) req.input.lastFile = null;
-					if (config.isDebug) process.stdout.write('<BINARY DATA+ ' + binaryBuffer.length + ' байт>' + (end_data ? '<CR><LN>' : ''));
-					if (config.isDebug && bound2) process.stdout.write('\r\n' + bound2.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>') + '\r\n');
-					//Удаляем данные
+					//Визуализация
+					if (config.isDebug) process.stdout.write((bound1 || '').replace(re_boundary,'--<BOUNDARY>$1<CR><LN>\r\n') + content.replace(/\r\n/g, '<CR><LN>') + value_str + (end_data ? '<CR><LN>' : '') + bound2.replace(re_boundary,'\r\n--<BOUNDARY>$1<CR><LN>\r\n'));
 					return '';
-				}
-				//Конечная граница
-				if (config.isDebug && bound2) process.stdout.write('\r\n' + bound2.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>'));
-				return (contents) ? (bound1 || '') + contents + bound2 : '';
-			});
+				})
+			}
 		};
 
 		//Функция обработки события завершения приема данных
 		var onDataEnd = function() {
 			if (chunks) {
-				console.error(['ERROR: INPUT: НЕ ВСЕ ДАННЫЕ РАСШИФРОВАНЫ!']);
-				console.error(chunks.replace(re_b,'<BOUNDARY>').replace(/\r\n/g, '<CR><LN>'));
+				console.error(['ERROR INPUT: НЕ ВСЕ ДАННЫЕ РАСШИФРОВАНЫ!']);
+				console.error([chunks.replace(re_boundary,'--<BOUNDARY>$1<CR><LN>').replace(/\r\n/g, '<CR><LN>')]);
 			}
-			var chunk = req.url.replace(/^[^?]*\??/, '');
-			//Формируем строку параметров из полученных данных
-			var str = require('querystring').unescape(chunk.toString('utf8'));
-			//Парсинг параметров
-			str.replace(/\+/g, ' ').replace(/([^=]*)=([^&]*)(?:&|$)/g, function (s, field, value) {
-				if (config.isDebug) console.log('DEBUG INPUT:', 'field="' + field + '" value="' + value + '"');
-				//Параметры есть - добавляем результат
-				self.saveFieldValue(req, field, value);
-			});
+			self.parseNotBoundaryChunk(req, req.url.replace(/^[^?]*\??/, ''));
+
 			if (config.isDebug) console.log('');
 			//Если есть загруженные файлы очищаем просроченные
 			if (req.input.files) self.cleanTmpDir();

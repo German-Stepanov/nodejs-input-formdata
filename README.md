@@ -2,11 +2,14 @@
 Получение и парсинг данных форм.
 ```
 Принимает данные из форм "application/x-www-form-urlencoded"/"multipart/form-data" и формирует объект с полученными данными.
-Принимает любое количество файлов из формы "multipart/form-data" методом "POST" в заданную директорию для временного хранения.
+Принимает в заданную директорию для временного хранения любое количество файлов из формы "multipart/form-data" методом "POST".
 Учитывает ограничение на размер получаемых данных.
 Автоматически удаляет просроченные файлы из директории для временного хранения.
 Формирует функцию для перемещения загруженных файлов.
 Позволяет использовать в названии полей формы точку . и/или квадратные скобки [] для помещения полученных данных в объект или в массив.
+Опционально позволяет устанавливать способ сохранения файлов
+- сохранение в файл каждой полученной порции данных файла (меньше потребляет ресурсов сервера)
+- сохранение в файл только польностью полученных порций данных файла (более быстрый)
 
 Метод "start" помещает функционал и полученные данные в req.input.
 req.input.parse			- объект с полученными данными полей формы
@@ -24,7 +27,9 @@ var input = require('input-formdata')(
 	//Срок хранения временных файлов, сек					
 	storageTime	: 5*60, 					
 	//Режим отладки
-	isDebug		: false,						
+	isDebug		: false,
+	//Режим
+	saveFileChunk : true						
 );
 
 //Формируем задачу
@@ -341,7 +346,17 @@ var lib_XHR = function () {
 					};
 				};
 			} else {
-				formData.append(form.elements[i].name, form.elements[i].value);
+				if (form.elements[i].type=='checkbox' && !form.elements[i].checked) {
+					//formData.append(form.elements[i].name, '');
+					continue;
+				} else if (form.elements[i].type=='select-multiple') {
+					for(var j=0;j<form.elements[i].options.length; j++) {
+						if (!form.elements[i].options[j].selected) continue;
+						formData.append(form.elements[i].name, form.elements[i].options[j].value);
+					}
+				} else {
+					formData.append(form.elements[i].name, form.elements[i].value);
+				}
 			};
 		};
 		this.run (url, formData, success);
@@ -466,11 +481,7 @@ if (req.input.parse.userfiles) {
 Пример серверного кода для проверки работоспособности расположен в директории "_demo"
 Для запуска установите конфигурацию модуля "output-view" (препроцессор шаблонов PHP)
 ```
-### Запуск тестового сервера из папки "input-formdata" или "_demo"
-```
-npm run demo
-```
-или из папки "_demo"
+### Запуск тестового сервера из папки "_demo"
 ```
 node server
 ```
